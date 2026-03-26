@@ -1,0 +1,82 @@
+-- table 생성 (user, policy, policy_condition)
+create table users (
+user_id int auto_increment primary key,  -- 사용자 id
+user_name varchar(10),
+age integer,  -- 나이
+gender varchar(20),  -- 성별
+income integer,  -- 소득
+region varchar(100),  -- 지역
+employment varchar(50),  -- 취업 여부
+military varchar(50),  -- 군 복무 여부
+
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- DROP TABLE users;
+
+create table policy (
+policy_id int auto_increment primary key,  -- 정책 id
+policy_name varchar(255) not null,  -- 정책 이름
+description text,  -- 정책 설명
+support_amount int,  -- 지원 금액
+support_amount_max int,   -- 최대 지원 금액
+support_type VARCHAR(50),     -- 지급 방식 (월/일시)
+apply_url text,  -- 신청 링크
+start_date date,  -- 시작일
+end_date date,  -- 종료일
+status varchar(20),  -- 상태(진헹중/종료)
+
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+
+create table policy_condition (
+condition_id int auto_increment primary key,   -- 조건 id
+policy_id integer,  -- 정책 id
+min_age integer,  -- 최소 나이
+max_age integer,  -- 최대 나이
+min_income integer,  -- 최소 소득
+max_income integer,  -- 최대 소득
+region varchar(100),  -- 지역
+employment varchar(50),  -- 취업 조건
+military varchar(50),  -- 군 복무 조건
+gender varchar(20),  -- 성별 조건
+
+foreign key (policy_id) references policy(policy_id),
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- DELETE FROM policy_condition WHERE condition_id > 0;
+-- DELETE FROM policy WHERE policy_id > 0;
+-- DELETE FROM users WHERE user_id > 0;
+-- commit;
+
+
+
+SELECT p.policy_name
+FROM users u
+JOIN policy_condition pc
+  ON TIMESTAMPDIFF(YEAR, u.birth_date, CURDATE())
+     BETWEEN pc.min_age AND pc.max_age
+  AND u.income BETWEEN pc.min_income AND pc.max_income
+JOIN policy p
+  ON pc.policy_id = p.policy_id;
+
+select * from users;
+select * from policy;
+select * from policy_condition;
+
+
+-- 사용자 데이터
+INSERT INTO users (user_name, age, gender, income, region, employment, military) VALUES
+('김민수', 23, '남', 150, '서울', '미취업', '미필'),
+('박서연', 27, '여', 80, '서울', '취업', '해당없음'),
+('이준호', 26, '남', 120, '서울', '취업', '복무완료'),
+('최지우', 24, '여', 90, '서울', '미취업', '해당없음'),
+('한성민', 28, '남', 200, '서울', '취업', '복무완료'),
+('윤지현', 22, '여', 70, '서울', '미취업', '해당없음'),
+('강민재', 25, '남', 130, '서울', '미취업', '복무중'),
+('오하은', 26, '여', 110, '서울', '취업', '해당없음'),
+('서지훈', 23, '남', 95, '서울', '미취업', '미필'),
+('조수민', 27, '여', 105, '서울', '취업', '해당없음');
