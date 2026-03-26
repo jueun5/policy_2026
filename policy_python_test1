@@ -1,0 +1,175 @@
+import requests
+import pymysql
+import re
+import openai
+
+# ----------------------------
+# 1. DB 연결
+# ----------------------------
+conn = pymysql.connect(
+    host='127.0.0.1',
+    user='first',        # DB 사용자
+    password='first',    # DB 비밀번호
+    db='first1',         # DB 이름
+    charset='utf8mb4'
+)
+cursor = conn.cursor(pymysql.cursors.DictCursor)
+
+# ----------------------------
+# 2. API 호출 및 정책 저장
+# ----------------------------
+url = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+params = {
+    "apiKeyNm": "29b26499-f479-4ff9-ac6a-f3cd799f532c",
+    "pageNum": 1,
+    "pageSize": 10,
+    "rtnType": "json"
+}
+
+response = requests.get(url, params=params)
+data = response.json()
+policies = data.get('result', {}).get('youthPolicyList', [])
+
+# ----------------------------
+# 3. 정제 함수
+# ----------------------------
+def to_int(value):
+    try: return int(value)
+    except: return None
+
+def parse_amount_range(text):
+    numbers = list(map(int, re.findall(r'\d+', text)))
+    if len(numbers) >= 2: return numbers[0]*10000, numbers[1]*10000
+    elif len(numbers) == 1: return numbers[0]*10000, None
+    return None, None
+
+def format_date(date_str):
+    if not date_str: return None
+    date_str = date_str.strip()
+    if len(date_str) == 8 and date_str.isdigit():
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    return None
+
+region_map = {
+    "11110": "서울특별시 종로구", "11140": "서울특별시 중구", "11170": "서울특별시 용산구",
+    "11200": "서울특별시 성동구", "11215": "서울특별시 광진구", "11230": "서울특별시 동대문구",
+    "11260": "서울특별시 중랑구", "11290": "서울특별시 성북구", "11305": "서울특별시 강북구",
+    "11320": "서울특별시 도봉구", "11350": "서울특별시 노원구", "11380": "서울특별시 은평구",
+    "11410": "서울특별시 서대문구", "11440": "서울특별시 마포구", "11470": "서울특별시 양천구",
+    "11500": "서울특별시 강서구", "11530": "서울특별시 구로구", "11545": "서울특별시 금천구",
+    "11560": "서울특별시 영등포구", "11590": "서울특별시 동작구", "11620": "서울특별시 관악구",
+    "11650": "서울특별시 서초구", "11680": "서울특별시 강남구", "11710": "서울특별시 송파구",
+    "11740": "서울특별시 강동구"
+}
+
+# ----------------------------
+# 4. 정책 DB 저장
+# ----------------------------
+for p in policies:
+    policy_name = p.get('plcyNm') or '이름 없음'
+    description = p.get('plcyExplnCn') or '설명 없음'
+    support_text = p.get('plcySprtCn') or ''
+    support_type = p.get('plcyPvsnMthdCd') or '미정'
+    amount, amount_max = parse_amount_range(support_text)
+    start_date = format_date(p.get('bizPrdBgngYmd'))
+    end_date = format_date(p.get('bizPrdEndYmd'))
+    apply_url = p.get('aplyUrlAddr') or p.get('refUrlAddr1') or None
+    min_age = to_int(p.get('sprtTrgtMinAge'))
+    max_age = to_int(p.get('sprtTrgtMaxAge'))
+    min_income = to_int(p.get('earnMinAmt'))
+    max_income = to_int(p.get('earnMaxAmt'))
+    region_code = str(p.get('zipCd')) if p.get('zipCd') else None
+    region_name = region_map.get(region_code, None)
+
+    cursor.execute("""
+    INSERT INTO policy (
+        policy_name, description, support_amount, support_amount_max,
+        support_type, apply_url, start_date, end_date, status
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (policy_name, description, amount, amount_max, support_type, apply_url, start_date, end_date, '진행중'))
+    policy_id = cursor.lastrowid
+
+    cursor.execute("""
+    INSERT INTO policy_condition (
+        policy_id, min_age, max_age, min_income, max_income, region,
+        employment, military, gender
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (policy_id, min_age, max_age, min_income, max_income, region_name, '무관', '무관', '무관'))
+
+conn.commit()
+
+# ----------------------------
+# 5. 사용자 입력
+# ----------------------------
+user_name = input("이름: ")
+age = input("나이: ")
+gender = input("성별(남성/여성): ")
+income = int(input("연 소득: "))
+region = input("지역: ")
+employment = input("취업 상태: ")
+military = input("군필 여부: ")
+
+cursor.execute("""
+INSERT INTO users (user_name, age, gender, income, region, employment, military)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
+""", (user_name, age, gender, income, region, employment, military))
+conn.commit()
+
+# ----------------------------
+# 6. 정책 추천 & 점수 계산
+# ----------------------------
+cursor.execute("SELECT * FROM users ORDER BY user_id DESC LIMIT 1")
+user = cursor.fetchone()
+
+cursor.execute("SELECT p.*, c.* FROM policy p JOIN policy_condition c ON p.policy_id=c.policy_id")
+all_policies = cursor.fetchall()
+
+matched_policies = []
+for p in all_policies:
+    score = 0
+    if p['min_age'] and int(user['age']) >= p['min_age']:
+        score += 1
+    if p['max_age'] and int(user['age']) <= p['max_age']:
+        score += 1
+    if p['region'] == user['region'] or p['region'] is None:
+        score += 1
+    if p['min_income'] and user['income'] >= p['min_income']:
+        score += 1
+    if p['max_income'] and user['income'] <= p['max_income']:
+        score += 1
+    if p['employment'] == user['employment'] or p['employment'] == '무관':
+        score += 1
+    p['score'] = score
+    matched_policies.append(p)
+
+matched_policies.sort(key=lambda x: x['score'], reverse=True)
+
+# # ----------------------------
+# # 7. OpenAI로 설명 생성
+# # ----------------------------
+
+from openai import OpenAI
+from os import getenv
+from dotenv import load_dotenv
+
+load_dotenv()
+api_key = getenv("key")  # .env에 key=여기에_넣기
+client = OpenAI(api_key=api_key)
+
+print("\n🔥 추천 정책 상위 5개 🔥\n")
+
+for policy in matched_policies[:5]:
+    prompt = f"""
+사용자 정보: 이름={user['user_name']}, 나이={user['age']}, 성별={user['gender']}, 소득={user['income']}, 지역={user['region']}, 취업={user['employment']}, 군필={user['military']}
+정책 정보: {policy['policy_name']} - {policy['description']}
+이 정책이 왜 사용자에게 적합한지 2~3문장으로 설명해줘.
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}]
+    )
+    explanation = response.choices[0].message.content
+    print(f"{policy['policy_name']} - 점수: {policy['score']}\n설명: {explanation}\n")
+
+conn.close()
+print("✅ 추천 완료!")
